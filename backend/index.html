@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Matheixt - Trading Platform</title>
+  <style>
+    body { background-color: #0d1117; color: #c9d1d9; font-family: Arial, sans-serif; margin: 0; padding: 10px; }
+    h1 { color: #58a6ff; font-size: 20px; text-align: center; }
+    .card { background: #161b22; padding: 15px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; }
+    button { background: #238636; color: white; border: none; padding: 10px; width: 100%; border-radius: 5px; font-weight: bold; cursor: pointer; margin-top: 5px; }
+    button.put { background: #da3633; }
+    input, select { width: 100%; padding: 8px; margin: 5px 0 10px 0; background: #0d1117; border: 1px solid #30363d; color: white; border-radius: 5px; box-sizing: border-box; }
+    .price-box { font-size: 24px; font-weight: bold; color: #3fb950; text-align: center; }
+    .balances { display: flex; justify-content: space-between; font-size: 14px; background: #21262d; padding: 8px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+
+  <h1>Matheixt Trading</h1>
+
+  <!-- AUTHENTIFICATION -->
+  <div class="card" id="auth-section">
+    <h3>Connexion</h3>
+    <input type="email" id="email" placeholder="Votre email (ex: trader@mail.com)">
+    <button onclick="loginUser()">Se connecter / S'inscrire</button>
+  </div>
+
+  <!-- PLATEFORME DE TRADING (Cachée au début) -->
+  <div id="trading-section" style="display:none;">
+    <div class="balances">
+      <span>Demo: <b id="bal-demo">10000.00</b> $</span>
+      <span>Réel: <b id="bal-real">0.00</b> $</span>
+    </div>
+
+    <div class="card">
+      <h3>Marché en Direct</h3>
+      <select id="symbol" onchange="changeSymbol()">
+        <option value="EUR/USD">EUR/USD OTC</option>
+        <option value="XAU/USD">Gold (XAU/USD)</option>
+      </select>
+      <div class="price-box" id="live-price">Chargement...</div>
+      <p style="font-size: 12px; text-align: center; margin: 5px 0;">RSI: <span id="rsi-val">--</span></p>
+    </div>
+
+    <div class="card">
+      <h3>Passer un Ordre</h3>
+      <label>Compte à utiliser :</label>
+      <select id="account-type">
+        <option value="demo">Compte Démo (10 000$ fictifs)</option>
+        <option value="real">Compte Réel</option>
+      </select>
+
+      <label>Montant de la mise ($) :</label>
+      <input type="number" id="stake" value="10" min="1">
+
+      <label>Durée :</label>
+      <select id="timeframe">
+        <option value="5">5 Secondes</option>
+        <option value="60" selected>1 Minute</option>
+        <option value="300">5 Minutes</option>
+      </select>
+
+      <button onclick="executeTrade('CALL')">📈 ACHETER (CALL)</button>
+      <button class="put" onclick="executeTrade('PUT')">📉 VENDRE (PUT)</button>
+    </div>
+
+    <div class="card">
+      <h3>Gestion Compte Réel</h3>
+      <input type="number" id="deposit-amount" placeholder="Montant du dépôt">
+      <button onclick="depositReal()">Déposer sur Réel</button>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND_URL = "https://matheixt.onrender.com";
+    let currentUserEmail = "";
+    let ws;
+
+    function loginUser() {
+      const email = document.getElementById('email').value;
+      if (!email) return alert('Entrez un email valide');
+
+      fetch(`${BACKEND_URL}/api/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data.success) {
+          currentUserEmail = email;
+          document.getElementById('auth-section').style.display = 'none';
+          document.getElementById('trading-section').style.display = 'block';
+          updateBalances(data.user);
+          connectWebSocket();
+        }
+      });
+    }
+
+    function updateBalances(user) {
+      document.getElementById('bal-demo').innerText = user.balanceDemo.toFixed(2);
+      document.getElementById('bal-real').innerText = user.balanceReal.toFixed(2);
+    }
+
+    function connectWebSocket() {
+      ws = new WebSocket(BACKEND_URL.replace('https', 'wss'));
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        const currentSymbol = document.getElementById('symbol').value;
+        if(msg.data && msg.data[currentSymbol]) {
+          document.getElementById('live-price').innerText = msg.data[currentSymbol].price;
+          if(msg.data[currentSymbol].rsi) {
+            document.getElementById('rsi-val').innerText = msg.data[currentSymbol].rsi;
+          }
+        }
+      };
+    }
+
+    function depositReal() {
+      const amount = parseFloat(document.getElementById('deposit-amount').value);
+      if(!amount || amount <= 0) return alert('Montant invalide');
+
+      fetch(`${BACKEND_URL}/api/account/deposit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: currentUserEmail, amount })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data.success) {
+          document.getElementById('bal-real').innerText = data.balanceReal.toFixed(2);
+          alert('Dépôt réussi !');
+        }
+      });
+    }
+
+    function executeTrade(direction) {
+      const stake = parseFloat(document.getElementById('stake').value);
+      const accountType = document.getElementById('account-type').value;
+      const symbol = document.getElementById('symbol').value;
+      const timeframe = parseInt(document.getElementById('timeframe').value);
+
+      fetch(`${BACKEND_URL}/api/trade/ai`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: currentUserEmail, stake, accountType, symbol, timeframe })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data.error) {
+          alert(data.error);
+        } else {
+          alert(`Trade terminé ! Résultat : ${data.isWin ? 'GAGNÉ (+'+data.payout+'$)' : 'PERDU'}`);
+          // Rafraîchir les soldes
+          loginUser();
+        }
+      });
+    }
+  </script>
+</body>
+</html>
